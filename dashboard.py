@@ -398,7 +398,7 @@ elif page == "Trends":
                 fig_p.add_trace(go.Bar(y=pdata['Store'], x=pdata['LY'], name='LY', orientation='h', marker_color=COLORS['ly']))
                 fig_p.add_trace(go.Bar(y=pdata['Store'], x=pdata['TY'], name='TY', orientation='h', marker_color=COLORS['ty']))
                 fig_p.update_layout(barmode='group', height=350, margin=dict(l=20, r=20, t=10, b=20), xaxis_title="Sales ($)")
-                st.plotly_chart(fig_p, use_container_width=True)
+                st.plotly_chart(fig_p, use_container_width=True, key=f"period_chart_{period}")
 
     # ── Transaction Trends ──
     st.markdown('<div class="section-header">Daily Transactions by Store Over Time</div>', unsafe_allow_html=True)
