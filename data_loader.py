@@ -1,6 +1,9 @@
 """
 Data loader for Multibrand Daily Flash Reports.
 Parses all Excel files in the folder and returns structured DataFrames.
+
+Option A mode: Designed to work with a single Excel file that gets
+replaced each time. The bracket number in the filename is ignored.
 """
 
 import os
@@ -208,28 +211,24 @@ def parse_flash_report(filepath):
 
 def load_all_reports(folder_path=None):
     """
-    Load all flash report Excel files from the given folder.
-    Returns a dict of combined DataFrames.
+    Load all Multibrand Flash Report Excel files from the given folder.
 
-    When multiple files share the same date, only one file is kept per date.
-    Priority order (highest to lowest):
-      1. Files listed in PREFERRED_FILES (by bracket suffix)
-      2. The file with the newest filesystem modification time
+    Option A mode: Reads ALL matching Excel files found, using the newest
+    file when multiple files share the same date. The bracket number in
+    the filename is completely ignored — just replace the file in GitHub
+    and it will always pick up the latest data.
     """
     if folder_path is None:
         folder_path = os.path.dirname(os.path.abspath(__file__))
 
-    # ── Preferred files: if multiple files share a date, these win ──
-    # Map bracket suffix → True. Add entries here to prefer a specific
-    # file for a given date, e.g. '[74]' for the 2/21 report.
-    PREFERRED_SUFFIXES = {'[74]'}
-
     pattern = os.path.join(folder_path, 'Multibrand_FlashReport*.xlsx')
     files = glob.glob(pattern)
 
-    # ── First pass: parse every file and group by date ──
-    # Each entry: (filepath, mtime, is_preferred, parsed_result)
-    parsed_by_date = {}  # date → list of (filepath, mtime, preferred, result)
+    if not files:
+        print(f"No matching Excel files found in: {folder_path}")
+
+    # Parse every file, group by date, keep newest mtime per date
+    parsed_by_date = {}  # date → (result, mtime)
 
     for filepath in files:
         try:
@@ -238,32 +237,23 @@ def load_all_reports(folder_path=None):
                 continue
             rdate = result['date']
             mtime = os.path.getmtime(filepath)
-            basename = os.path.basename(filepath)
-            # Check if this file's bracket suffix is preferred
-            suffix_match = re.search(r'(\[\d+\])', basename)
-            suffix = suffix_match.group(1) if suffix_match else ''
-            preferred = suffix in PREFERRED_SUFFIXES
 
-            parsed_by_date.setdefault(rdate, []).append(
-                (filepath, mtime, preferred, result)
-            )
+            # Keep the file with the newest modification time for each date
+            if rdate not in parsed_by_date or mtime > parsed_by_date[rdate][1]:
+                parsed_by_date[rdate] = (result, mtime)
+
         except Exception as e:
             print(f"Error parsing {filepath}: {e}")
             continue
 
-    # ── Second pass: pick one file per date ──
+    # Combine all winning results into DataFrames
     all_sales = []
     all_brand_totals = []
     all_transactions = []
     all_channels = []
     all_labor = []
 
-    for rdate, entries in parsed_by_date.items():
-        # Sort: preferred first, then newest mtime
-        entries.sort(key=lambda e: (e[2], e[1]), reverse=True)
-        winner = entries[0]  # best candidate
-        result = winner[3]
-
+    for rdate, (result, _) in parsed_by_date.items():
         all_sales.extend(result['sales'])
         all_brand_totals.append(result['brand_total'])
         all_transactions.extend(result['transactions'])
