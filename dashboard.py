@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import date
 from data_loader import load_all_reports
 
 # ───────────────────────── Page Config ─────────────────────────
@@ -84,6 +85,22 @@ labor_df = data['labor']
 if sales_df.empty:
     st.error("No flash report data found. Place Excel files in the same folder as this dashboard.")
     st.stop()
+
+# ───────────────────────── Freshness Check ─────────────────────────
+# Warn if the newest report loaded is more than a day old. Daily reports
+# normally lag one day, so anything 2+ days behind usually means the latest
+# exports were duplicates of an earlier day (the "Selected Date" wasn't
+# advanced before download).
+_latest_date = pd.to_datetime(sales_df['date']).max().date()
+_days_behind = (date.today() - _latest_date).days
+if _days_behind >= 2:
+    st.warning(
+        f"⚠️ **Data may be stale.** The most recent report loaded is for "
+        f"**{_latest_date:%A, %b %d, %Y}** — {_days_behind} days ago. "
+        f"Files added since then may be duplicate exports of the same day. "
+        f"When you download the Flash Report, make sure the **Selected Date** is "
+        f"advanced to the new day *before* saving, then run **push_reports.command**."
+    )
 
 # ───────────────────────── Sidebar ─────────────────────────
 with st.sidebar:

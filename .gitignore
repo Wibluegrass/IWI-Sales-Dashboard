@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 .DS_Store
 .streamlit/secrets.toml
+
+# Local-only helper that carries no secrets now, but keep it out of the repo
+push_reports.command
+
+# Local runtime / editor / scratch files
+dashboard.log
+.claude/
+*.bundle
+_to_delete/
