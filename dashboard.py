@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date
-from data_loader import load_all_reports
+from data_loader import load_all_reports, LAST_LOAD
 
 # ───────────────────────── Page Config ─────────────────────────
 st.set_page_config(
@@ -70,7 +70,12 @@ STORE_COLORS = px.colors.qualitative.Set2
 FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 
-@st.cache_data(ttl=60)
+# No TTL. The report files only change when a push redeploys the app, and a
+# redeploy starts a fresh process with an empty cache anyway. The old 60-second
+# TTL meant re-parsing every workbook in the folder once a minute -- roughly 180
+# files and half a minute of work, repeated forever. The "Refresh Data" button
+# in the sidebar clears this cache on demand.
+@st.cache_data(show_spinner="Loading flash reports...")
 def get_data():
     return load_all_reports(FOLDER)
 
@@ -100,6 +105,17 @@ if _days_behind >= 2:
         f"Files added since then may be duplicate exports of the same day. "
         f"When you download the Flash Report, make sure the **Selected Date** is "
         f"advanced to the new day *before* saving, then run **push_reports.command**."
+    )
+
+_conflicts = LAST_LOAD.get('conflicting_dates') or {}
+if _conflicts:
+    _lines = "\n".join(
+        f"- **{d}** — using `{names[-1]}`" for d, names in sorted(_conflicts.items())
+    )
+    st.warning(
+        "⚠️ **Duplicate reports disagree.** More than one file carries these "
+        "report dates and their numbers differ. The most recently downloaded "
+        "file was used:\n\n" + _lines
     )
 
 # ───────────────────────── Sidebar ─────────────────────────
