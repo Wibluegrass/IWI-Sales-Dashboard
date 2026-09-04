@@ -77,6 +77,15 @@ def safe_int(val, default=0):
         return default
 
 
+# A file the ingest step has renamed to its business date, e.g.
+# Multibrand_FlashReport.2026-09-01.xlsx
+DATED_FILENAME = re.compile(r'\.\d{4}-\d{2}-\d{2}\.xlsx$')
+
+# Sorts a date-named file after every browser-numbered one. Numbered downloads
+# top out in the hundreds, so this is unreachable by a real sequence number.
+CURATED_SEQUENCE = 10 ** 7
+
+
 def download_sequence(filepath):
     """Order a file by when it was downloaded.
 
@@ -84,8 +93,15 @@ def download_sequence(filepath):
     a higher number is a later pull of that report. The un-suffixed file is the
     first download and sorts earliest. This survives a git clone, which mtime
     does not.
+
+    A file named for its business date has been curated by ingest_reports.py
+    and is authoritative for that day, so it sorts after every numbered
+    download and wins the duplicate resolution in load_all_reports().
     """
-    match = re.search(r'\[(\d+)\]\.xlsx$', os.path.basename(filepath))
+    name = os.path.basename(filepath)
+    if DATED_FILENAME.search(name):
+        return CURATED_SEQUENCE
+    match = re.search(r'\[(\d+)\]\.xlsx$', name)
     return int(match.group(1)) if match else 0
 
 
