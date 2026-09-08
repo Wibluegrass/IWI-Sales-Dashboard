@@ -43,17 +43,23 @@ DATED = re.compile(r'\.(\d{4}-\d{2}-\d{2})\.xlsx$')
 NUMBERED = re.compile(r'\[(\d+)\]\.xlsx$')
 DATE_TEXT = re.compile(r'Selected Date:\s*(\d{1,2})/(\d{1,2})/(\d{4})')
 STALE_DAYS = 2      # newest report older than this is called out
+PUBLISHED_BY = 9    # hour (Central) by which yesterday's report is normally out
 LOOKBACK = 30       # how far back to hunt for holes
+
+
+def business_now():
+    """Current time where the stores are, not where this process runs."""
+    if ZoneInfo is not None:
+        try:
+            return datetime.datetime.now(ZoneInfo(BUSINESS_TZ))
+        except Exception:
+            pass
+    return datetime.datetime.now()
 
 
 def business_today():
     """Today's date where the stores are, not where this process runs."""
-    if ZoneInfo is not None:
-        try:
-            return datetime.datetime.now(ZoneInfo(BUSINESS_TZ)).date()
-        except Exception:
-            pass
-    return datetime.date.today()
+    return business_now().date()
 
 
 def report_date(path):
@@ -95,22 +101,49 @@ def already_committed(folder):
     return set(os.path.basename(line) for line in out.stdout.splitlines() if line)
 
 
+def modified_since_commit(folder):
+    """Tracked report files whose bytes on disk differ from the committed copy.
+
+    A browser download counter that has been reset hands out low numbers again,
+    so a fresh report can arrive named Multibrand_FlashReport.nopag[58].xlsx --
+    a name a March report already owns -- and overwrite it. The file is still
+    "tracked", so a name-only check calls it historical and skips it: the new
+    day is never taken in and the old day is destroyed in the same stroke.
+    Comparing content against the commit is what tells the two apart.
+
+    Returns None when git cannot answer, which means: treat nothing as changed.
+    """
+    try:
+        out = subprocess.run(['git', '-C', folder, 'diff', '--name-only',
+                              'HEAD', '--', PATTERN],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return set(os.path.basename(line) for line in out.stdout.splitlines() if line)
+
+
 def rename_new_arrivals(folder):
     """Rename newly arrived browser-numbered files to their business date.
 
-    Returns (renamed, replaced, unreadable).
+    Returns (renamed, replaced, rescued, unreadable).
     """
-    renamed, replaced, unreadable = [], [], []
+    renamed, replaced, rescued, unreadable = [], [], [], []
     tracked = already_committed(folder)
     if tracked is None:
         print('   !! git could not list tracked files -- renaming nothing.')
-        return renamed, replaced, unreadable
+        return renamed, replaced, rescued, unreadable
+    changed = modified_since_commit(folder)
+    if changed is None:
+        changed = set()
     for path in sorted(glob.glob(os.path.join(folder, PATTERN))):
         name = os.path.basename(path)
         if DATED.search(name) or not NUMBERED.search(name):
             continue
-        if name in tracked:          # historical download, leave it alone
-            continue
+        landed_on_old_name = name in changed
+        if name in tracked and not landed_on_old_name:
+            continue                 # historical download, leave it alone
         day = report_date(path)
         if day is None:
             unreadable.append(name)
@@ -126,7 +159,20 @@ def rename_new_arrivals(folder):
         else:
             os.rename(path, target)
             renamed.append((name, os.path.basename(target)))
-    return renamed, replaced, unreadable
+        if landed_on_old_name:
+            # The name this arrival landed on belonged to an older report that
+            # is now only in git. Put it back, or that day is simply gone.
+            try:
+                subprocess.run(['git', '-C', folder, 'checkout', 'HEAD',
+                                '--', name],
+                               capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if os.path.exists(path):
+                rescued.append(name)
+            else:
+                unreadable.append(name + ' (overwritten, could not restore)')
+    return renamed, replaced, rescued, unreadable
 
 
 def survey(folder):
@@ -147,12 +193,15 @@ def main():
     problems = []
 
     if not check_only:
-        renamed, replaced, unreadable = rename_new_arrivals(folder)
+        renamed, replaced, rescued, unreadable = rename_new_arrivals(folder)
         for old, new in renamed:
             print('   renamed  {}  ->  {}'.format(old, new))
         for old, new in replaced:
             print('   replaced {}  ->  {}  (newer download of a day already held)'
                   .format(old, new))
+        for name in rescued:
+            print('   restored {}  (a new download had landed on this name)'
+                  .format(name))
         if not renamed and not replaced:
             print('   no new report files to take in')
         for name in unreadable:
@@ -186,8 +235,14 @@ def main():
                if start + datetime.timedelta(days=i) not in days]
     if missing:
         # Each day's report is published the following morning, so the most
-        # recent gap is usually just not out yet rather than a lost day.
-        pending = missing[-1] if missing[-1] == last else None
+        # recent gap is usually just not out yet rather than a lost day --
+        # but only early. Every next-day pull in this folder's history landed
+        # between 7:31am and 1:32pm Central, median 8:51am. Past PUBLISHED_BY
+        # the report is out, so a still-empty yesterday is a real gap and gets
+        # counted as one instead of being waved through every single morning.
+        pending = None
+        if missing[-1] == last and business_now().hour < PUBLISHED_BY:
+            pending = missing[-1]
         firm = [d for d in missing if d != pending]
         print('\n   MISSING in the last {} days:'.format(LOOKBACK))
         if firm:
